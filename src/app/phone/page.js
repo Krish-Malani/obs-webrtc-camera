@@ -83,10 +83,13 @@ export default function PhonePage() {
       }
 
       try {
-        // Drop aggressive constraints to ensure it works perfectly every time
+        // Request the absolute highest resolution using 'ideal' constraints. 
+        // The browser will gracefully step down to the max resolution supported by the hardware (e.g. 1080p or 720p) without throwing errors.
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: mode
+            facingMode: mode,
+            width: { ideal: 3840 },
+            height: { ideal: 2160 }
           },
           audio: false
         });
@@ -139,6 +142,16 @@ export default function PhonePage() {
 
         if (settings.width && settings.height) {
           setResolution({ width: settings.width, height: settings.height });
+        }
+        
+        // Wait for metadata to load to get true video dimensions (fixes portrait/landscape aspect ratio layout explosions)
+        if (videoRef.current) {
+          videoRef.current.onloadedmetadata = () => {
+            setResolution({ 
+              width: videoRef.current.videoWidth, 
+              height: videoRef.current.videoHeight 
+            });
+          };
         }
         if (settings.frameRate) {
           setFps(settings.frameRate);
