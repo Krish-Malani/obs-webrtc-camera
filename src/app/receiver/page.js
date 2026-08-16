@@ -101,12 +101,17 @@ function ReceiverPage() {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
       videoRef.current.play().catch(e => console.error("Autoplay blocked:", e));
-      videoRef.current.onloadedmetadata = () => {
-        setResolution({ 
-          width: videoRef.current.videoWidth, 
-          height: videoRef.current.videoHeight 
-        });
-      };
+      if (videoRef.current) {
+        const videoEl = videoRef.current;
+        videoEl.onloadedmetadata = () => {
+          setResolution({ width: videoEl.videoWidth, height: videoEl.videoHeight });
+          setStatus('Connected and receiving video');
+        };
+        // Also listen for resize events (fired when sender rotates camera)
+        videoEl.onresize = () => {
+          setResolution({ width: videoEl.videoWidth, height: videoEl.videoHeight });
+        };
+      }
     }
   }, [stream, isObsMode]);
 

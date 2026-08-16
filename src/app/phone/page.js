@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Camera as CameraIcon, RefreshCcw, Wifi, WifiOff, CheckCircle, XCircle, HelpCircle } from 'lucide-react';
+import { ArrowLeft, Camera as CameraIcon, RefreshCcw, Wifi, WifiOff, CheckCircle, XCircle, HelpCircle, Maximize, Minimize } from 'lucide-react';
 
 export default function PhonePage() {
   const videoRef = useRef(null);
@@ -27,6 +27,31 @@ export default function PhonePage() {
   const [wifiPermission, setWifiPermission] = useState('unknown');
   const [cameraPermission, setCameraPermission] = useState('prompt');
   const [retryCount, setRetryCount] = useState(0);
+
+  const [targetQuality, setTargetQuality] = useState('1080p');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const videoContainerRef = useRef(null);
+
+  // Fullscreen event listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      if (videoContainerRef.current?.requestFullscreen) {
+        videoContainerRef.current.requestFullscreen().catch(e => console.error("Fullscreen error:", e));
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
 
   // Check network type and device on mount
   useEffect(() => {
@@ -83,12 +108,20 @@ export default function PhonePage() {
       }
 
       try {
-        // Request standard 1080p HD resolution to ensure smooth WebRTC performance without CPU/network lag
+        const RESOLUTIONS = {
+          '4K': { width: { ideal: 3840 }, height: { ideal: 2160 } },
+          '1080p': { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          '720p': { width: { ideal: 1280 }, height: { ideal: 720 } },
+          '480p': { width: { ideal: 854 }, height: { ideal: 480 } }
+        };
+        const targetRes = RESOLUTIONS[targetQuality] || RESOLUTIONS['1080p'];
+
+        // Request chosen resolution
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: mode,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
+            width: targetRes.width,
+            height: targetRes.height
           },
           audio: false
         });
@@ -107,6 +140,15 @@ export default function PhonePage() {
         localStreamRef.current = mediaStream;
         setStatus(callRef.current ? 'Streaming to receiver' : 'Camera active, waiting to connect...');
         setCameraPermission('granted');
+
+        // Seamless hot-swap: if actively streaming, replace the video track
+        if (callRef.current) {
+          const senders = callRef.current.peerConnection.getSenders();
+          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+          if (videoSender) {
+            videoSender.replaceTrack(mediaStream.getVideoTracks()[0]).catch(e => console.error('Error replacing track:', e));
+          }
+        }
 
         const track = mediaStream.getVideoTracks()[0];
         const settings = track.getSettings();
@@ -151,11 +193,13 @@ export default function PhonePage() {
         
         // Wait for metadata to load to get true video dimensions (fixes portrait/landscape aspect ratio calculations)
         if (videoRef.current) {
-          videoRef.current.onloadedmetadata = () => {
-            setResolution({ 
-              width: videoRef.current.videoWidth, 
-              height: videoRef.current.videoHeight 
-            });
+          const videoEl = videoRef.current;
+          videoEl.onloadedmetadata = () => {
+            setResolution({ width: videoEl.videoWidth, height: videoEl.videoHeight });
+          };
+          // Also listen for resize events (fired when a mobile device is physically rotated)
+          videoEl.onresize = () => {
+            setResolution({ width: videoEl.videoWidth, height: videoEl.videoHeight });
           };
         }
         if (settings.frameRate) {
@@ -185,19 +229,21 @@ export default function PhonePage() {
           else if (err.message && err.message !== 'null') msg = err.message;
           
           setError(msg);
-          setStatus('Error');
+          console.error("Camera access error:", err);
         }
       }
     }
 
-    startCamera(facingMode);
+    if (wifiPermission !== 'unknown' && cameraPermission !== 'denied') {
+      startCamera(facingMode);
+    }
 
     return () => {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [facingMode, retryCount]);
+  }, [facingMode, cameraPermission, wifiPermission, retryCount, targetQuality]);
 
   // Connect to Receiver
   const connectToReceiver = async () => {
@@ -306,35 +352,51 @@ export default function PhonePage() {
         
         {/* Left Column: Camera Feed */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col w-full lg:flex-1 h-auto lg:h-full min-w-0">
-          <div className="flex items-center justify-between mb-4 relative shrink-0 gap-8">
-            <Link href="/" className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors z-10 shrink-0">
-              <ArrowLeft size={20} />
-              <span className="hidden sm:inline">Back</span>
-            </Link>
+          <div className="flex items-center justify-between mb-4 relative shrink-0">
+            {/* Left: Back Button */}
+            <div className="flex-1 flex justify-start">
+              <Link href="/" className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors z-10 shrink-0">
+                <ArrowLeft size={20} />
+                <span className="hidden sm:inline">Back</span>
+              </Link>
+            </div>
             
-            <div className="flex items-center gap-2 justify-center flex-1 shrink-0">
+            {/* Center: Title */}
+            <div className="flex-1 flex items-center justify-center gap-2 shrink-0">
               <CameraIcon className="text-purple-500 hidden sm:block" />
               <h2 className="text-lg sm:text-xl font-bold whitespace-nowrap">Camera Feed</h2>
               {isConnected && (
-                <div className="flex items-center gap-1.5 text-green-500 text-xs font-medium bg-green-500/10 px-2 py-1 rounded-full border border-green-500/20 ml-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-bold tracking-wide uppercase">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                   Live
                 </div>
               )}
             </div>
-
-            <button 
-              onClick={toggleCamera}
-              disabled={!hasMultipleCameras}
-              className={`flex items-center gap-2 p-2 sm:px-4 sm:py-2 rounded-xl text-sm font-medium transition-colors z-10 shrink-0 ${hasMultipleCameras ? 'bg-zinc-800 hover:bg-zinc-700' : 'opacity-0 pointer-events-none'}`}
-            >
-              <RefreshCcw size={16} />
-              <span className="hidden sm:inline">Switch</span>
-            </button>
+            
+            {/* Right: Buttons */}
+            <div className="flex-1 flex justify-end items-center gap-2 shrink-0">
+              <button 
+                onClick={toggleFullscreen}
+                className="flex items-center gap-2 p-2 sm:px-4 sm:py-2 rounded-xl text-sm font-medium transition-colors z-10 shrink-0 bg-zinc-800 hover:bg-zinc-700"
+              >
+                {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+                <span className="hidden sm:inline">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
+              </button>
+              
+              <button 
+                onClick={toggleCamera}
+                disabled={!hasMultipleCameras}
+                className={`flex items-center gap-2 p-2 sm:px-4 sm:py-2 rounded-xl text-sm font-medium transition-colors z-10 shrink-0 ${hasMultipleCameras ? 'bg-zinc-800 hover:bg-zinc-700' : 'opacity-0 pointer-events-none'}`}
+              >
+                <RefreshCcw size={16} />
+                <span className="hidden sm:inline">Switch</span>
+              </button>
+            </div>
           </div>
           
           <div className="flex-1 min-h-0 w-full relative">
             <div 
+              ref={videoContainerRef}
               className="bg-black rounded-xl overflow-hidden border border-zinc-800 w-full h-full relative flex items-center justify-center lg:!aspect-auto"
               style={{ aspectRatio: resolution ? `${resolution.width}/${resolution.height}` : '16/9' }}
             >
@@ -446,10 +508,25 @@ export default function PhonePage() {
           {/* Details Box */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl shrink-0">
             <h3 className="text-xl font-bold mb-4 text-zinc-100">Stream Details</h3>
-            <div className="grid grid-cols-2 gap-4">
+            
+            <div className="mb-4">
+              <label className="block text-zinc-400 text-xs font-medium mb-2">Target Quality</label>
+              <select 
+                value={targetQuality}
+                onChange={(e) => setTargetQuality(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm font-medium text-white focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
+              >
+                <option value="4K">4K Ultra HD (3840×2160)</option>
+                <option value="1080p">1080p Full HD (1920×1080)</option>
+                <option value="720p">720p HD (1280×720)</option>
+                <option value="480p">480p SD (854×480)</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-3">
               <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800">
-                <p className="text-zinc-400 text-sm mb-1">Resolution</p>
-                <p className="font-semibold text-lg">{resolution ? `${resolution.width} × ${resolution.height}` : '-'}</p>
+                <p className="text-zinc-400 text-xs font-medium mb-1">Actual Resolution</p>
+                <p className="font-mono font-bold">{resolution ? `${resolution.width} × ${resolution.height}` : 'Calculating...'}</p>
               </div>
               <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800">
                 <p className="text-zinc-400 text-sm mb-1">Camera</p>
