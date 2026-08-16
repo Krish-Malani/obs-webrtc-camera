@@ -139,7 +139,7 @@ function ReceiverPage() {
       <div className="max-w-[1600px] mx-auto h-auto lg:h-[calc(100vh-4rem)] flex flex-col lg:flex-row gap-6">
         
         {/* Left Column: Camera Feed */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col w-full lg:flex-1 h-[60vh] lg:h-full min-w-0">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col w-full lg:flex-1 h-auto lg:h-full min-w-0">
           <div className="flex items-center justify-between mb-4 relative shrink-0 gap-8">
             <Link href="/" className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors z-10 shrink-0">
               <ArrowLeft size={20} />
@@ -168,7 +168,8 @@ function ReceiverPage() {
           
           <div className="flex-1 min-h-0 w-full relative">
             <div 
-              className="bg-black rounded-xl overflow-hidden border border-zinc-800 w-full h-full relative flex items-center justify-center transition-all duration-300"
+              className="bg-black rounded-xl overflow-hidden border border-zinc-800 w-full h-full relative flex items-center justify-center transition-all duration-300 lg:!aspect-auto"
+              style={{ aspectRatio: resolution ? `${resolution.width}/${resolution.height}` : '16/9' }}
             >
               <video 
                 ref={videoRef}

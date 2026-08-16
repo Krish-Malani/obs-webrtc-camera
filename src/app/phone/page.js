@@ -93,6 +93,12 @@ export default function PhonePage() {
           audio: false
         });
 
+        // Force WebRTC to prioritize resolution over framerate during network drops
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        if (videoTrack && 'contentHint' in videoTrack) {
+          videoTrack.contentHint = 'detail';
+        }
+
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
         }
@@ -234,29 +240,26 @@ export default function PhonePage() {
           setStatus('Streaming to receiver');
           setIsConnected(true);
           setReceiverPin('');
-          
-          // Force WebRTC to use maximum bandwidth and prevent automatic resolution downscaling now that negotiation is complete
-          let attempts = 0;
-          const forceHighRes = setInterval(() => {
-            attempts++;
-            if (attempts > 10) clearInterval(forceHighRes); // Give up after 5 seconds
 
+          // Force WebRTC connection to NEVER downscale resolution dynamically
+          try {
             const senders = call.peerConnection.getSenders();
             senders.forEach(sender => {
               if (sender.track && sender.track.kind === 'video') {
                 const params = sender.getParameters();
+                params.degradationPreference = 'maintain-resolution';
+                
                 if (params.encodings && params.encodings.length > 0) {
                   params.encodings[0].maxBitrate = 8000000;
-                  params.encodings[0].scaleResolutionDownBy = 1;
-                  sender.setParameters(params).then(() => {
-                    clearInterval(forceHighRes);
-                    console.log('Successfully locked WebRTC to max resolution and bitrate');
-                  }).catch(e => console.error('Failed to set encoding params:', e));
                 }
+                
+                sender.setParameters(params).catch(e => console.log('Notice: Could not set RTCPeerConnection parameters:', e));
               }
             });
-          }, 500);
-          
+          } catch (e) {
+            console.log('Notice: RTCRtpSender degradationPreference not supported on this browser.');
+          }
+
         } else if (state === 'disconnected' || state === 'failed') {
           setStatus('Disconnected from receiver. Check Hotspot connection.');
           setIsConnected(false);
@@ -302,7 +305,7 @@ export default function PhonePage() {
       <div className="max-w-[1600px] mx-auto h-auto lg:h-[calc(100vh-2rem)] flex flex-col lg:flex-row gap-6">
         
         {/* Left Column: Camera Feed */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col w-full lg:flex-1 h-[60vh] lg:h-full min-w-0">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col w-full lg:flex-1 h-auto lg:h-full min-w-0">
           <div className="flex items-center justify-between mb-4 relative shrink-0 gap-8">
             <Link href="/" className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors z-10 shrink-0">
               <ArrowLeft size={20} />
@@ -332,7 +335,8 @@ export default function PhonePage() {
           
           <div className="flex-1 min-h-0 w-full relative">
             <div 
-              className="bg-black rounded-xl overflow-hidden border border-zinc-800 w-full h-full relative flex items-center justify-center"
+              className="bg-black rounded-xl overflow-hidden border border-zinc-800 w-full h-full relative flex items-center justify-center lg:!aspect-auto"
+              style={{ aspectRatio: resolution ? `${resolution.width}/${resolution.height}` : '16/9' }}
             >
               {error ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-zinc-950/90 z-20">
