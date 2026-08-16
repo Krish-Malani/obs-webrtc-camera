@@ -83,13 +83,12 @@ export default function PhonePage() {
       }
 
       try {
-        // Request the absolute highest resolution using 'ideal' constraints. 
-        // The browser will gracefully step down to the max resolution supported by the hardware (e.g. 1080p or 720p) without throwing errors.
+        // Request standard 1080p HD resolution to ensure smooth WebRTC performance without CPU/network lag
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: mode,
-            width: { ideal: 3840 },
-            height: { ideal: 2160 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
           },
           audio: false
         });
@@ -144,7 +143,7 @@ export default function PhonePage() {
           setResolution({ width: settings.width, height: settings.height });
         }
         
-        // Wait for metadata to load to get true video dimensions (fixes portrait/landscape aspect ratio layout explosions)
+        // Wait for metadata to load to get true video dimensions (fixes portrait/landscape aspect ratio calculations)
         if (videoRef.current) {
           videoRef.current.onloadedmetadata = () => {
             setResolution({ 
@@ -215,12 +214,18 @@ export default function PhonePage() {
       setStatus(`Calling receiver (PIN: ${receiverPin})...`);
       const targetId = `obs-${receiverPin}`;
       
-      const call = peer.call(targetId, localStreamRef.current);
+      // Pass SDP transform to forcefully request 8Mbps bandwidth
+      const call = peer.call(targetId, localStreamRef.current, {
+        sdpTransform: (sdp) => {
+          return sdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8000\r\n');
+        }
+      });
       callRef.current = call;
 
       call.on('stream', () => {
         setStatus('Streaming to receiver');
         setIsConnected(true);
+        setReceiverPin('');
       });
       
       call.peerConnection.addEventListener('connectionstatechange', () => {
@@ -228,6 +233,30 @@ export default function PhonePage() {
         if (state === 'connected') {
           setStatus('Streaming to receiver');
           setIsConnected(true);
+          setReceiverPin('');
+          
+          // Force WebRTC to use maximum bandwidth and prevent automatic resolution downscaling now that negotiation is complete
+          let attempts = 0;
+          const forceHighRes = setInterval(() => {
+            attempts++;
+            if (attempts > 10) clearInterval(forceHighRes); // Give up after 5 seconds
+
+            const senders = call.peerConnection.getSenders();
+            senders.forEach(sender => {
+              if (sender.track && sender.track.kind === 'video') {
+                const params = sender.getParameters();
+                if (params.encodings && params.encodings.length > 0) {
+                  params.encodings[0].maxBitrate = 8000000;
+                  params.encodings[0].scaleResolutionDownBy = 1;
+                  sender.setParameters(params).then(() => {
+                    clearInterval(forceHighRes);
+                    console.log('Successfully locked WebRTC to max resolution and bitrate');
+                  }).catch(e => console.error('Failed to set encoding params:', e));
+                }
+              }
+            });
+          }, 500);
+          
         } else if (state === 'disconnected' || state === 'failed') {
           setStatus('Disconnected from receiver. Check Hotspot connection.');
           setIsConnected(false);
@@ -270,10 +299,10 @@ export default function PhonePage() {
         </div>
       )}
 
-      <div className="max-w-[1600px] mx-auto h-[auto] lg:h-[calc(100vh-2rem)] flex flex-col lg:flex-row gap-6">
+      <div className="max-w-[1600px] mx-auto h-auto lg:h-[calc(100vh-2rem)] flex flex-col lg:flex-row gap-6">
         
         {/* Left Column: Camera Feed */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col h-[60vh] lg:h-full w-full lg:w-fit max-w-full mx-auto lg:mx-0 shrink-0">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl flex flex-col w-full lg:flex-1 h-[60vh] lg:h-full min-w-0">
           <div className="flex items-center justify-between mb-4 relative shrink-0 gap-8">
             <Link href="/" className="inline-flex items-center gap-2 text-zinc-400 hover:text-white transition-colors z-10 shrink-0">
               <ArrowLeft size={20} />
@@ -301,10 +330,9 @@ export default function PhonePage() {
             </button>
           </div>
           
-          <div className="flex-1 min-h-0 w-full flex items-center justify-center">
+          <div className="flex-1 min-h-0 w-full relative">
             <div 
-              className="bg-black rounded-xl overflow-hidden border border-zinc-800 h-full flex justify-center items-center relative"
-              style={{ aspectRatio: resolution ? `${resolution.width}/${resolution.height}` : '16/9' }}
+              className="bg-black rounded-xl overflow-hidden border border-zinc-800 w-full h-full relative flex items-center justify-center"
             >
               {error ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-zinc-950/90 z-20">
@@ -327,7 +355,7 @@ export default function PhonePage() {
                     playsInline 
                     muted
                     style={{ transform: isMirrored ? 'scaleX(-1)' : 'scaleX(1)' }}
-                    className="w-full h-full object-cover block"
+                    className="w-full h-full object-contain block absolute inset-0"
                   />
                   {!stream && <p className="text-zinc-500 absolute py-12">Waiting for camera permission...</p>}
                 </>
@@ -337,7 +365,7 @@ export default function PhonePage() {
         </div>
 
         {/* Right Column: Controls & Stats */}
-        <div className="flex flex-col gap-6 w-full lg:flex-1 h-auto lg:h-full lg:overflow-y-auto shrink-0 pb-4 custom-scrollbar">
+        <div className="flex flex-col gap-6 w-full lg:w-[400px] shrink-0 h-auto lg:h-full lg:overflow-y-auto pb-4 custom-scrollbar">
           
           {/* Connection Box */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl shrink-0">
