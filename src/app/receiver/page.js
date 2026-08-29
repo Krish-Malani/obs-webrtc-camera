@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, MonitorPlay, FlipHorizontal, Maximize, ExternalLink } from 'lucide-react';
 
 const ICE_SERVERS = {
@@ -203,14 +204,32 @@ function ReceiverPage() {
             <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
             
             <h3 className="text-xl font-bold mb-6 text-zinc-100 flex items-center gap-2">
-              Connection PIN
+              Connect Phone
             </h3>
             
-            <div className="bg-zinc-950 rounded-xl p-6 border border-zinc-800 text-center relative overflow-hidden">
-              <p className="text-zinc-400 mb-3 text-sm">Enter this code on your phone</p>
-              <p className="text-6xl sm:text-7xl font-mono font-bold tracking-[0.2em] text-purple-400 bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-indigo-400">
-                {receiverId || '....'}
-              </p>
+            <div className="bg-zinc-950 rounded-xl p-6 border border-zinc-800 text-center relative overflow-hidden flex flex-col items-center">
+              <p className="text-zinc-400 mb-5 text-sm font-medium">Scan QR or enter PIN</p>
+              
+              {receiverId ? (
+                <div className="bg-white p-3 rounded-xl mb-6 shadow-xl transform transition-transform hover:scale-105">
+                  <QRCodeSVG 
+                    value={`obs-${receiverId}`} 
+                    size={150} 
+                    level={"H"}
+                  />
+                </div>
+              ) : (
+                <div className="w-[174px] h-[174px] bg-zinc-900 rounded-xl mb-6 animate-pulse border border-zinc-800 flex items-center justify-center text-zinc-500 text-sm">
+                  Loading QR...
+                </div>
+              )}
+              
+              <div className="inline-block relative group cursor-default">
+                <div className="absolute inset-0 bg-purple-500/20 blur-xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <p className="text-5xl sm:text-6xl font-mono font-bold tracking-[0.2em] text-purple-400 bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-indigo-400 relative">
+                  {receiverId || '....'}
+                </p>
+              </div>
             </div>
           </div>
 

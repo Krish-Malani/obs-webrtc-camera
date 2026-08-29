@@ -1,17 +1,19 @@
 {
-  "name": "client",
-  "version": "0.1.0",
+  "name": "webcam-obs",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
     "lucide-react": "^1.31.0",
     "next": "16.3.1",
     "peerjs": "^1.5.5",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

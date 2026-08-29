@@ -2,7 +2,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Camera as CameraIcon, RefreshCcw, Wifi, WifiOff, CheckCircle, XCircle, HelpCircle, Maximize, Minimize } from 'lucide-react';
+import { ArrowLeft, Camera as CameraIcon, RefreshCcw, Wifi, WifiOff, CheckCircle, XCircle, HelpCircle, Maximize, Minimize, QrCode } from 'lucide-react';
+import jsQR from "jsqr";
 
 export default function PhonePage() {
   const videoRef = useRef(null);
@@ -27,10 +28,14 @@ export default function PhonePage() {
   const [wifiPermission, setWifiPermission] = useState('unknown');
   const [cameraPermission, setCameraPermission] = useState('prompt');
   const [retryCount, setRetryCount] = useState(0);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
 
   const [targetQuality, setTargetQuality] = useState('1080p');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const videoContainerRef = useRef(null);
+
+  const [isScanningQR, setIsScanningQR] = useState(false);
+  const scanAnimationFrame = useRef(null);
 
   // Fullscreen event listener
   useEffect(() => {
@@ -108,6 +113,10 @@ export default function PhonePage() {
       }
 
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Your browser blocked camera access because this network connection is not secure (HTTP). You must use HTTPS or localhost to access the camera, or enable insecure origins in chrome://flags.");
+        }
+
         const RESOLUTIONS = {
           '4K': { width: { ideal: 3840 }, height: { ideal: 2160 } },
           '1080p': { width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -242,19 +251,67 @@ export default function PhonePage() {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
       }
+      stopQRScanner();
     };
   }, [facingMode, cameraPermission, wifiPermission, retryCount, targetQuality]);
 
-  // Connect to Receiver
-  const connectToReceiver = async () => {
-    if (!receiverPin || receiverPin.length !== 4) {
-      alert('Please enter a valid 4-digit PIN');
+  // QR Scanning Logic
+  const startQRScanner = () => {
+    if (!localStreamRef.current || !videoRef.current) return;
+    setIsScanningQR(true);
+    scanQRCode();
+  };
+
+  const stopQRScanner = () => {
+    setIsScanningQR(false);
+    if (scanAnimationFrame.current) {
+      cancelAnimationFrame(scanAnimationFrame.current);
+      scanAnimationFrame.current = null;
+    }
+  };
+
+  const scanQRCode = () => {
+    if (!isScanningQR && !scanAnimationFrame.current) return; // Prevent race conditions
+    
+    if (!videoRef.current || videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) {
+      scanAnimationFrame.current = requestAnimationFrame(scanQRCode);
       return;
     }
-    if (!localStreamRef.current) {
-      alert('Camera is not ready yet');
-      return;
+    
+    // Create hidden canvas for jsQR analysis
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    
+    if (context) {
+      context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: "dontInvert",
+      });
+      
+      if (code && code.data && code.data.startsWith("obs-")) {
+        // Success! Found the peer ID
+        stopQRScanner();
+        
+        const scannedId = code.data;
+        const pinPart = scannedId.replace('obs-', '');
+        setReceiverPin(pinPart);
+        
+        // Connect directly
+        connectToPeerJS(scannedId, pinPart);
+        return;
+      }
     }
+    
+    // Keep scanning
+    scanAnimationFrame.current = requestAnimationFrame(scanQRCode);
+  };
+
+  // Shared Connection Logic
+  const connectToPeerJS = async (targetId, pinToDisplay) => {
+    if (!localStreamRef.current) return;
 
     setStatus('Connecting to PeerJS server...');
     const { Peer } = await import('peerjs');
@@ -263,10 +320,8 @@ export default function PhonePage() {
     peerRef.current = peer;
 
     peer.on('open', (id) => {
-      setStatus(`Calling receiver (PIN: ${receiverPin})...`);
-      const targetId = `obs-${receiverPin}`;
+      setStatus(`Calling receiver (PIN: ${pinToDisplay})...`);
       
-      // Pass SDP transform to forcefully request 8Mbps bandwidth
       const call = peer.call(targetId, localStreamRef.current, {
         sdpTransform: (sdp) => {
           return sdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8000\r\n');
@@ -335,6 +390,14 @@ export default function PhonePage() {
     });
   };
 
+  const connectToReceiver = () => {
+    if (!receiverPin || receiverPin.length !== 4) {
+      alert('Please enter a valid 4-digit PIN');
+      return;
+    }
+    connectToPeerJS(`obs-${receiverPin}`, receiverPin);
+  };
+
   const toggleCamera = () => {
     setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
   };
@@ -345,6 +408,58 @@ export default function PhonePage() {
         <div className="bg-orange-500/20 border border-orange-500 text-orange-400 px-4 py-3 rounded-xl mb-6 flex items-start gap-3 max-w-2xl mx-auto">
           <WifiOff className="shrink-0 mt-0.5" size={20} />
           <p className="text-sm leading-tight">{wifiWarning}</p>
+        </div>
+      )}
+
+      {/* Permission Instructions Modal */}
+      {showPermissionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl relative">
+            <button 
+              onClick={() => setShowPermissionModal(false)}
+              className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 p-2 rounded-full transition-colors"
+            >
+              <XCircle size={20} />
+            </button>
+            
+            <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-2xl flex items-center justify-center mb-6">
+              <CameraIcon size={32} />
+            </div>
+            
+            <h2 className="text-2xl font-bold mb-3 text-white">Camera Access Blocked</h2>
+            
+            <p className="text-zinc-400 text-sm leading-relaxed mb-6">
+              Your browser has blocked camera access for this site. To use this app, you need to manually allow camera access in your browser settings.
+            </p>
+            
+            <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-5 mb-8">
+              <ol className="text-sm text-zinc-300 space-y-4 font-medium">
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-xs">1</span>
+                  <span>Tap the <strong>settings icon</strong> (aA, padlock, or tune) in your browser's address bar.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-xs">2</span>
+                  <span>Find <strong>Camera</strong> in the site settings.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-xs">3</span>
+                  <span>Change the permission to <strong>Allow</strong>.</span>
+                </li>
+              </ol>
+            </div>
+            
+            <button 
+              onClick={() => {
+                setShowPermissionModal(false);
+                setError(null);
+                setRetryCount(c => c + 1);
+              }}
+              className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 px-6 rounded-xl transition-colors shadow-lg shadow-purple-900/20"
+            >
+              I've Allowed It, Try Again
+            </button>
+          </div>
         </div>
       )}
 
@@ -407,7 +522,14 @@ export default function PhonePage() {
                   </div>
                   <p className="text-red-400 font-medium mb-6 max-w-sm">{error}</p>
                   <button 
-                    onClick={() => { setError(null); setRetryCount(c => c + 1); }}
+                    onClick={() => { 
+                      if (cameraPermission === 'denied' || (typeof error === 'string' && error.toLowerCase().includes("denied"))) {
+                        setShowPermissionModal(true);
+                      } else {
+                        setError(null); 
+                        setRetryCount(c => c + 1); 
+                      }
+                    }}
                     className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-6 py-2.5 rounded-xl text-sm font-bold transition-colors"
                   >
                     Try Again
@@ -449,12 +571,36 @@ export default function PhonePage() {
               />
               <button 
                 onClick={connectToReceiver}
-                disabled={isConnected}
-                className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-800 disabled:text-zinc-500 transition-colors rounded-xl font-bold text-lg px-6"
+                disabled={!receiverPin || receiverPin.length !== 4 || isConnected || !localStreamRef.current || isScanningQR}
+                className="bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-bold py-3 px-6 rounded-xl transition-colors shrink-0"
               >
                 {isConnected ? 'Connected' : 'Connect'}
               </button>
             </div>
+
+            <div className="mt-4 flex items-center gap-4">
+              <div className="h-px bg-zinc-800 flex-1"></div>
+              <span className="text-xs text-zinc-500 font-medium uppercase tracking-wider">or</span>
+              <div className="h-px bg-zinc-800 flex-1"></div>
+            </div>
+            
+            <button 
+              onClick={isScanningQR ? stopQRScanner : startQRScanner}
+              disabled={isConnected || !localStreamRef.current}
+              className={`mt-4 w-full font-bold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 border disabled:opacity-50 ${isScanningQR ? 'bg-purple-600/20 text-purple-400 border-purple-500/30 hover:bg-purple-600/30 animate-pulse' : 'bg-zinc-800 text-white border-zinc-700 hover:bg-zinc-700'}`}
+            >
+              {isScanningQR ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                  Scanning... Point camera at PC
+                </>
+              ) : (
+                <>
+                  <QrCode size={18} />
+                  Scan QR Code to Connect
+                </>
+              )}
+            </button>
           </div>
 
           {/* Permissions Box */}
