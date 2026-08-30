@@ -255,15 +255,19 @@ export default function PhonePage() {
     };
   }, [facingMode, cameraPermission, wifiPermission, retryCount, targetQuality]);
 
+  const isScanningRef = useRef(false);
+
   // QR Scanning Logic
   const startQRScanner = () => {
     if (!localStreamRef.current || !videoRef.current) return;
     setIsScanningQR(true);
+    isScanningRef.current = true;
     scanQRCode();
   };
 
   const stopQRScanner = () => {
     setIsScanningQR(false);
+    isScanningRef.current = false;
     if (scanAnimationFrame.current) {
       cancelAnimationFrame(scanAnimationFrame.current);
       scanAnimationFrame.current = null;
@@ -271,7 +275,7 @@ export default function PhonePage() {
   };
 
   const scanQRCode = () => {
-    if (!isScanningQR && !scanAnimationFrame.current) return; // Prevent race conditions
+    if (!isScanningRef.current) return; // Prevent race conditions synchronously
     
     if (!videoRef.current || videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) {
       scanAnimationFrame.current = requestAnimationFrame(scanQRCode);
